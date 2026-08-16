@@ -1,16 +1,22 @@
 // ENEMY SYSTEM (GDD §16, §39): enemy AI — Grunt, Charger, Gunner.
-import Phaser from 'phaser';
-import { allocId, type Actor } from '../core/types';
+import Phaser from "phaser";
+import { allocId, type Actor } from "../core/types";
+import { enemyHpMult } from "../core/difficulty";
 import {
   ENEMIES,
   ELITE_HP_MULT,
   type EnemyDef,
   type EnemyKind,
-} from '../data/enemies';
-import type { WeaponSystem } from './WeaponSystem';
-import { playSound } from '../core/audio';
+} from "../data/enemies";
+import type { WeaponSystem } from "./WeaponSystem";
+import { playSound } from "../core/audio";
 
-export type EnemyAiState = 'approach' | 'strafe' | 'telegraph' | 'dash' | 'stun';
+export type EnemyAiState =
+  | "approach"
+  | "strafe"
+  | "telegraph"
+  | "dash"
+  | "stun";
 
 export interface EnemyActor extends Actor {
   kind: EnemyKind;
@@ -25,12 +31,21 @@ export interface EnemyActor extends Actor {
   strafeDir: number;
   strafeFlipAt: number;
   shakeT: number;
+  contactAt: number; // brute body-contact cooldown (scene ms)
 }
 
 export interface EnemyWorld {
   scene: Phaser.Scene;
-  getPlayer(): { x: number; y: number; alive: boolean; radius: number };
+  getPlayer(): {
+    x: number;
+    y: number;
+    alive: boolean;
+    radius: number;
+    vulnerable: boolean; // false while flying a ship (body hidden)
+  };
   onChargerContact: (e: EnemyActor, dmg: number) => void;
+  /** Kamikaze blew up on the player: FX + score/drops + removal (GDD §16.5). */
+  onKamikazeBlow: (e: EnemyActor) => void;
 }
 
 export class EnemySystem {
@@ -38,13 +53,22 @@ export class EnemySystem {
   private world: EnemyWorld;
   private weapons: WeaponSystem;
 
-  constructor(world: EnemyWorld, weapons: WeaponSystem, enemies: EnemyActor[] = []) {
+  constructor(
+    world: EnemyWorld,
+    weapons: WeaponSystem,
+    enemies: EnemyActor[] = [],
+  ) {
     this.world = world;
     this.weapons = weapons;
     this.enemies = enemies;
   }
 
-  spawnEnemy(kind: EnemyKind, x: number, y: number, opts?: { elite?: boolean; summoned?: boolean }): EnemyActor {
+  spawnEnemy(
+    kind: EnemyKind,
+    x: number,
+    y: number,
+    opts?: { elite?: boolean; summoned?: boolean },
+  ): EnemyActor {
     const def = ENEMIES[kind];
     const elite = opts?.elite ?? false;
     const scene = this.world.scene;
@@ -60,15 +84,15 @@ export class EnemySystem {
       def,
       elite,
       summoned: opts?.summoned ?? false,
-      team: 'enemy',
+      team: "enemy",
       sprite,
       body,
-      hp: Math.round(def.hp * (elite ? ELITE_HP_MULT : 1)),
+      hp: Math.round(def.hp * (elite ? ELITE_HP_MULT : 1) * enemyHpMult()),
       maxHp: Math.round(def.hp * (elite ? ELITE_HP_MULT : 1)),
       alive: true,
       invulnUntil: 0,
       flashUntil: 0,
-      aiState: 'approach',
+      aiState: "approach",
       stateUntil: 0,
       dashDirX: 0,
       dashDirY: 0,
@@ -76,6 +100,7 @@ export class EnemySystem {
       strafeDir: Math.random() < 0.5 ? -1 : 1,
       strafeFlipAt: scene.time.now + 1200 + Math.random() * 1500,
       shakeT: 0,
+      contactAt: 0,
     };
     this.enemies.push(e);
     return e;
@@ -106,12 +131,22 @@ export class EnemySystem {
     this.separate();
   }
 
-  private updateEnemy(e: EnemyActor, now: number, player: { x: number; y: number; alive: boolean; radius: number }): void {
+  private updateEnemy(
+    e: EnemyActor,
+    now: number,
+    player: {
+      x: number;
+      y: number;
+      alive: boolean;
+      radius: number;
+      vulnerable: boolean;
+    },
+  ): void {
     // Hit flash (GDD §14: impacto visible).
     if (now < e.flashUntil) {
       e.sprite.setTintFill(0xffffff);
     } else if (e.elite) e.sprite.setTint(0xffd25f);
-      else e.sprite.clearTint();
+    else e.sprite.clearTint();
 
     const dx = player.x - e.sprite.x;
     const dy = player.y - e.sprite.y;
@@ -120,14 +155,23 @@ export class EnemySystem {
     const uy = dy / dist;
 
     switch (e.kind) {
-      case 'grunt':
+      case "grunt":
         this.updateGrunt(e, now, player, ux, uy, dist);
         break;
-      case 'charger':
+      case "charger":
         this.updateCharger(e, now, player, ux, uy, dist);
         break;
-      case 'gunner':
+      case "gunner":
         this.updateGunner(e, now, player, ux, uy, dist);
+        break;
+      case "sniper":
+        this.updateSniper(e, now, player, ux, uy, dist);
+        break;
+      case "kamikaze":
+        this.updateKamikaze(e, now, player, ux, uy, dist);
+        break;
+      case "brute":
+        this.updateBrute(e, now, player, ux, uy, dist);
         break;
     }
   }
@@ -142,17 +186,25 @@ export class EnemySystem {
   ): void {
     const { def } = e;
     if (dist > def.engageRange) {
-      e.aiState = 'approach';
+      e.aiState = "approach";
       e.body.velocity.x = ux * def.speed;
       e.body.velocity.y = uy * def.speed;
     } else {
-      e.aiState = 'strafe';
+      e.aiState = "strafe";
       // Orbit slowly while keeping range (GDD §16.1: mantiene distancia moderada).
       e.body.velocity.x = -uy * def.speed * 0.5 + ux * def.speed * 0.3;
       e.body.velocity.y = ux * def.speed * 0.5 + uy * def.speed * 0.3;
       if (def.weapon) {
         const aim = Math.atan2(player.y - e.sprite.y, player.x - e.sprite.x);
-        this.weapons.enemyShoot(e.id, e.sprite.x, e.sprite.y, aim, def.weapon, 'enemy', now);
+        this.weapons.enemyShoot(
+          e.id,
+          e.sprite.x,
+          e.sprite.y,
+          aim,
+          def.weapon,
+          "enemy",
+          now,
+        );
       }
     }
   }
@@ -160,24 +212,30 @@ export class EnemySystem {
   private updateCharger(
     e: EnemyActor,
     now: number,
-    player: { x: number; y: number; alive: boolean; radius: number },
+    player: {
+      x: number;
+      y: number;
+      alive: boolean;
+      radius: number;
+      vulnerable: boolean;
+    },
     ux: number,
     uy: number,
     dist: number,
   ): void {
     const { def } = e;
     switch (e.aiState) {
-      case 'approach':
+      case "approach":
         e.body.velocity.x = ux * def.speed;
         e.body.velocity.y = uy * def.speed;
         if (dist < def.engageRange * 0.85 && now > e.stateUntil) {
-          e.aiState = 'telegraph';
+          e.aiState = "telegraph";
           e.stateUntil = now + 480;
           e.body.velocity.x = 0;
           e.body.velocity.y = 0;
         }
         break;
-      case 'telegraph': {
+      case "telegraph": {
         // Charging up: flash and shake so the player can read it (GDD §16.2).
         e.body.velocity.x = 0;
         e.body.velocity.y = 0;
@@ -191,43 +249,51 @@ export class EnemySystem {
           e.dashDirX = Math.cos(a);
           e.dashDirY = Math.sin(a);
           e.dashHit = false;
-          e.aiState = 'dash';
+          e.aiState = "dash";
           e.stateUntil = now + 420;
-          playSound('plasma');
+          playSound("plasma");
         }
         break;
       }
-      case 'dash':
+      case "dash":
         e.body.velocity.x = e.dashDirX * 430;
         e.body.velocity.y = e.dashDirY * 430;
-        if (!e.dashHit && player.alive) {
+        if (!e.dashHit && player.alive && player.vulnerable) {
           const pr = player.radius;
-          if (Phaser.Math.Distance.Between(e.sprite.x, e.sprite.y, player.x, player.y) < def.radius + pr + 2) {
+          if (
+            Phaser.Math.Distance.Between(
+              e.sprite.x,
+              e.sprite.y,
+              player.x,
+              player.y,
+            ) <
+            def.radius + pr + 2
+          ) {
             e.dashHit = true;
             this.world.onChargerContact(e, def.contactDamage ?? 20);
           }
         }
         if (now >= e.stateUntil) {
           if (e.dashHit) {
-            e.aiState = 'approach';
+            e.aiState = "approach";
             e.stateUntil = now + 900;
           } else {
             // Missed: vulnerable after the charge (GDD §16.2).
-            e.aiState = 'stun';
+            e.aiState = "stun";
             e.stateUntil = now + 1100;
             e.body.velocity.x = 0;
             e.body.velocity.y = 0;
           }
         }
         break;
-      case 'stun':
+      case "stun":
         e.body.velocity.x = 0;
         e.body.velocity.y = 0;
         if (Math.floor(now / 120) % 2 === 0) e.sprite.setTintFill(0xffffff);
         else if (e.elite) e.sprite.setTint(0xffd25f);
         else e.sprite.clearTint();
         if (now >= e.stateUntil) {
-          e.aiState = 'approach';
+          e.aiState = "approach";
           e.stateUntil = now + 400;
         }
         break;
@@ -264,7 +330,182 @@ export class EnemySystem {
     e.body.velocity.y = vy;
     if (def.weapon) {
       const aim = Math.atan2(player.y - e.sprite.y, player.x - e.sprite.x);
-      this.weapons.enemyShoot(e.id, e.sprite.x, e.sprite.y, aim, def.weapon, 'enemy', now);
+      this.weapons.enemyShoot(
+        e.id,
+        e.sprite.x,
+        e.sprite.y,
+        aim,
+        def.weapon,
+        "enemy",
+        now,
+      );
+    }
+  }
+
+  private updateSniper(
+    e: EnemyActor,
+    now: number,
+    player: { x: number; y: number; radius: number },
+    ux: number,
+    uy: number,
+    dist: number,
+  ): void {
+    const { def } = e;
+    let vx = 0;
+    let vy = 0;
+    if (dist < 240) {
+      vx = -ux * def.speed;
+      vy = -uy * def.speed;
+    } else if (dist > 340) {
+      vx = ux * def.speed;
+      vy = uy * def.speed;
+    } else {
+      // Orbit at long range (GDD §16.4: mantiene distancia larga).
+      vx = -uy * def.speed * 0.5;
+      vy = ux * def.speed * 0.5;
+    }
+    e.body.velocity.x = vx;
+    e.body.velocity.y = vy;
+    if (dist < 380 && def.weapon) {
+      const aim = Math.atan2(player.y - e.sprite.y, player.x - e.sprite.x);
+      this.weapons.enemyShoot(
+        e.id,
+        e.sprite.x,
+        e.sprite.y,
+        aim,
+        def.weapon,
+        "enemy",
+        now,
+      );
+    }
+  }
+
+  private updateKamikaze(
+    e: EnemyActor,
+    now: number,
+    player: {
+      x: number;
+      y: number;
+      alive: boolean;
+      radius: number;
+      vulnerable: boolean;
+    },
+    ux: number,
+    uy: number,
+    dist: number,
+  ): void {
+    const { def } = e;
+    switch (e.aiState) {
+      case "approach":
+        e.body.velocity.x = ux * def.speed;
+        e.body.velocity.y = uy * def.speed;
+        if (dist < def.engageRange * 0.9 && now > e.stateUntil) {
+          e.aiState = "telegraph";
+          e.stateUntil = now + 400;
+          e.body.velocity.x = 0;
+          e.body.velocity.y = 0;
+        }
+        break;
+      case "telegraph": {
+        // Fuse lit: flash so the player can react (GDD §16.5).
+        e.body.velocity.x = 0;
+        e.body.velocity.y = 0;
+        const blink = Math.floor((now / 70) % 2) === 0;
+        e.sprite.setTint(blink ? 0xffffff : 0xff8a2f);
+        if (now >= e.stateUntil) {
+          const a = Math.atan2(player.y - e.sprite.y, player.x - e.sprite.x);
+          e.dashDirX = Math.cos(a);
+          e.dashDirY = Math.sin(a);
+          e.dashHit = false;
+          e.aiState = "dash";
+          e.stateUntil = now + 600;
+          playSound("plasma");
+        }
+        break;
+      }
+      case "dash":
+        e.body.velocity.x = e.dashDirX * 420;
+        e.body.velocity.y = e.dashDirY * 420;
+        if (!e.dashHit && player.alive && player.vulnerable) {
+          const pr = player.radius;
+          if (
+            Phaser.Math.Distance.Between(
+              e.sprite.x,
+              e.sprite.y,
+              player.x,
+              player.y,
+            ) <
+            def.radius + pr + 2
+          ) {
+            e.dashHit = true;
+            this.world.onChargerContact(e, def.contactDamage ?? 24);
+            this.world.onKamikazeBlow(e);
+          }
+        }
+        if (now >= e.stateUntil && !e.dashHit) {
+          e.aiState = "stun";
+          e.stateUntil = now + 700;
+          e.body.velocity.x = 0;
+          e.body.velocity.y = 0;
+        }
+        break;
+      case "stun":
+        e.body.velocity.x = 0;
+        e.body.velocity.y = 0;
+        if (Math.floor(now / 120) % 2 === 0) e.sprite.setTintFill(0xffffff);
+        else e.sprite.clearTint();
+        if (now >= e.stateUntil) {
+          e.aiState = "approach";
+          e.stateUntil = now + 300;
+        }
+        break;
+    }
+  }
+
+  private updateBrute(
+    e: EnemyActor,
+    now: number,
+    player: {
+      x: number;
+      y: number;
+      alive: boolean;
+      radius: number;
+      vulnerable: boolean;
+    },
+    ux: number,
+    uy: number,
+    dist: number,
+  ): void {
+    const { def } = e;
+    if (dist > def.engageRange) {
+      e.body.velocity.x = ux * def.speed;
+      e.body.velocity.y = uy * def.speed;
+    } else {
+      // Slow push forward + close-range burst (GDD §16.6).
+      e.body.velocity.x = ux * def.speed * 0.4;
+      e.body.velocity.y = uy * def.speed * 0.4;
+      if (def.weapon) {
+        const aim = Math.atan2(player.y - e.sprite.y, player.x - e.sprite.x);
+        this.weapons.enemyShoot(
+          e.id,
+          e.sprite.x,
+          e.sprite.y,
+          aim,
+          def.weapon,
+          "enemy",
+          now,
+        );
+      }
+    }
+    // Body-contact damage with a cooldown.
+    if (
+      player.alive &&
+      player.vulnerable &&
+      now >= e.contactAt &&
+      dist < def.radius + player.radius + 2
+    ) {
+      e.contactAt = now + 800;
+      this.world.onChargerContact(e, def.contactDamage ?? 15);
     }
   }
 

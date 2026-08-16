@@ -154,11 +154,10 @@ Un momento representativo del juego:
 4. Le roba un arma de plasma.
 5. Destruye a los guardias.
 6. Mata al piloto.
-7. Se acerca a la nave.
-8. Aparece `ROBAR NAVE`.
-9. Entra.
-10. La cámara se aleja ligeramente.
-11. El jugador comienza a destruir enemigos usando la nave alienígena.
+7. Se acerca a la nave y permanece ~0.7 s en su área (proximidad, sin botón).
+8. Aparece `ROBAR NAVE` y el jugador entra.
+9. La cámara se aleja ligeramente.
+10. El jugador comienza a destruir enemigos usando la nave alienígena.
 
 Ese momento debe aparecer durante los primeros minutos de juego.
 
@@ -280,33 +279,31 @@ Pensado para dos pulgares.
 
 ## Pie
 
-### Joystick izquierdo
+### Joystick de movimiento (toda la pantalla)
 
-Movimiento.
+Un solo joystick dinámico: aparece donde toques, en cualquier parte de la
+pantalla, y mueve a la entidad controlada.
 
-### Joystick derecho
+### Disparo automático
 
-Apuntar.
+El arma **apunta y dispara sola** al enemigo más cercano dentro de ~430 px
+(enemigos, naves hostiles y boss). No hay aim manual táctil: el joystick de
+movimiento es el único control táctil.
 
-Al superar cierta distancia desde el centro:
+### Interacción por proximidad
 
-* comienza a disparar.
+No hay botón de acción: acércate al objeto y permanece en su área.
 
-Al soltar:
+* arma / escudo / botiquín: ~0.4 s en rango;
+* robar nave: ~0.7 s en rango.
 
-* deja de disparar.
+Una barra de progreso bajo el texto indica el avance. El progreso **no se
+reinicia al moverse**, solo al salir del área del objeto (o cambiar de
+objeto).
 
-### Botón central contextual
+### Botón central (solo al pilotar)
 
-Usado para:
-
-* recoger;
-* entrar;
-* robar;
-* activar;
-* abrir.
-
-La acción depende del objeto cercano.
+Solo aparece al pilotar una nave: **SALIR DE LA NAVE** (mantener ~0.4 s).
 
 ---
 
@@ -317,12 +314,13 @@ Debe ser mínimo.
 Parte superior:
 
 ```text
-❤️❤️❤️                   🔫 Plasma
+❤ ██████████░░           🔫 Plasma
 ```
 
 Información inicial:
 
-* vida;
+* vida (barra continua, verde → amarillo → rojo);
+* escudo (🛡 X% bajo la barra, solo mientras hay escudo);
 * arma actual;
 * munición solo si el arma la requiere.
 
@@ -355,6 +353,7 @@ Humano.
 Propiedades:
 
 * vida;
+* escudo (absorbe daño antes que la vida);
 * velocidad;
 * arma;
 * posición;
@@ -366,7 +365,7 @@ Valores del MVP pueden ser completamente arbitrarios y ajustarse durante pruebas
 Ejemplo:
 
 ```text
-Vida: 100
+Vida: 150
 Velocidad: media
 Arma inicial: pistola
 ```
@@ -450,6 +449,48 @@ Promueve acercarse.
 
 ---
 
+### 15.4 RÁFAGA (burst rifle)
+
+Ráfaga de 3 disparos por ciclo.
+
+```text
+Daño: bajo por bala, alto por ráfaga
+Cadencia: 3 disparos + pausa
+Proyectil: bala rápida
+```
+
+Daño frontal concentrado: ideal para abrir escudos de golpe.
+
+---
+
+### 15.5 PENETRADOR (railgun)
+
+Disparo único que **atraviesa** a todos los enemigos en línea.
+
+```text
+Daño: alto
+Cadencia: baja
+Proyectil: rayo rápido, penetrante
+```
+
+Destruye filas enteras; cuidado con el retroceso.
+
+---
+
+### 15.6 MISIL (homing)
+
+Cohete que **persigue al enemigo más cercano** con giro limitado.
+
+```text
+Daño: alto
+Cadencia: baja
+Proyectil: lento, guiado
+```
+
+Impacto con explosión amplia; se puede esquivar en giros cerrados.
+
+---
+
 ## Drops
 
 Cuando muere un enemigo que porta arma:
@@ -457,6 +498,11 @@ Cuando muere un enemigo que porta arma:
 puede dejarla caer.
 
 El jugador puede reemplazar su arma actual.
+
+Además, los enemigos pueden soltar un **escudo** y un **botiquín**:
+
+al recoger el escudo el jugador recibe 50 de absorción antes que la vida;
+el botiquín cura 50 HP. Ambos se recogen por proximidad.
 
 MVP:
 
@@ -512,6 +558,18 @@ Comportamiento:
 
 Puede portar mejores armas.
 
+## 16.4 Sniper
+
+Mantiene distancia larga y dispara tiros pesados lentos.
+
+## 16.5 Kamikaze
+
+Corre hacia el jugador, enciende la mecha y **explota al contacto**.
+
+## 16.6 Brute
+
+Tanque lento con ráfagas cortas y daño por contacto.
+
 ---
 
 # 17. Naves
@@ -539,6 +597,11 @@ Debe existir algún requisito claro.
 Para MVP:
 
 > **La nave queda robable cuando su piloto ha muerto o ha sido neutralizado.**
+
+Mientras la nave está tripulada, **todo disparo impactado la neutraliza al
+piloto** (no hay hitbox separada de cabina): dispara a la nave unas pocas
+veces y quedará disponible para robar. Una vez muerto el piloto, los
+disparos dañan el casco y pueden destruirla.
 
 Flujo:
 
@@ -620,6 +683,38 @@ Más difícil de capturar.
 
 ---
 
+## 20.3 Interceptor
+
+Caza rápido y frágil.
+
+Características:
+
+```text
+Velocidad: muy alta
+Vida: baja
+Arma: scatter (ráfaga corta)
+```
+
+Ideal para abrir distancias; su arma destroza a corta distancia.
+
+---
+
+## 20.4 Alien Gunship
+
+Nave de asalto media.
+
+Características:
+
+```text
+Velocidad: media
+Vida: media-alta
+Arma: cañón de pulsos
+```
+
+Buena defensa y DPS constante.
+
+---
+
 # 21. Destrucción de la nave
 
 Cuando la vida de la nave llega a cero:
@@ -669,6 +764,10 @@ Gunners
 6–8 min
 más densidad + Scout Ships
 
+**Dificultad seleccionable** (AJUSTES): fácil / normal / difícil — escala
+vida y daño enemigo, cadencia de spawn, daño del jugador y puntaje
+(+50 % en difícil, −25 % en fácil).
+
 8+ min
 Bomber + elites
 ```
@@ -689,6 +788,13 @@ Características:
 * varios patrones de disparo;
 * invoca enemigos;
 * zonas vulnerables.
+
+Al empezar la pelea de boss, **se detiene el spawn ambiental** de enemigos
+y naves: el jugador se concentra solo en el comandante (sus invocaciones
+siguen funcionando).
+
+Al 25% de vida entra en **modo berserk**: patrón de espiral giratorio,
+proyectiles más rápidos, casco rojo pulsante y tema musical propio.
 
 El objetivo inicial es derrotarlo.
 
@@ -740,6 +846,10 @@ La sensación debe ser:
 
 > Empecé siendo insignificante y terminé usando su propia tecnología contra ellos.
 
+**Power-ups de run:** los enemigos pueden soltar buffos temporales (~10 s):
+ráfaga rápida, tiro triple, proyectiles penetrantes, velocidad e imán de
+recogida. Se muestran con su contador en el HUD.
+
 ---
 
 # 25. Meta progresión
@@ -757,6 +867,13 @@ Posteriormente podrían desbloquearse:
 * mutaciones de run.
 
 Pero el primer prototipo debe funcionar sin ningún sistema de progresión permanente.
+
+Ya implementado (adelantado): **selector de skins** en AJUSTES (4 packs:
+CLÁSICO, REBELDE, FANTASMA, IMPERIAL). Cada pack incluye el traje del
+jugador **y diseños de naves distintos** (geometrías y paletas propias:
+angulares, elegantes, con adornos). Las naves enemigas conservan el diseño
+clásico para distinguirlas; al robar una nave, se repinta con el pack
+seleccionado. Persistido en `localStorage`, sin desbloqueos.
 
 ---
 
@@ -866,7 +983,14 @@ Toda acción importante debe sentirse.
 
 * flash;
 * partículas;
-* sonido.
+* sonido;
+* número de daño flotante;
+* vibración (haptics) en nativo: golpe recibido, kill, robo de nave.
+
+## Puntaje
+
+* PUNTOS y multiplicador de combo (×1–×5) en el HUD;
+* la racha se rompe al recibir daño o tras 3.5 s sin kills.
 
 ## Muerte
 
@@ -899,7 +1023,12 @@ Mínimos:
 * entrada a nave;
 * destrucción de nave.
 
-La música puede llegar después.
+Música: bucle ambiental procedural (Am–F–C–G, pad + bajo + arpegio) que suena
+en menú y partida.
+
+Ajustes (GDD §32): desde el menú principal, AJUSTES permite **desactivar y
+cambiar el volumen** por separado de la música y de los efectos. Los valores
+se guardan en `localStorage`.
 
 ---
 
@@ -908,8 +1037,17 @@ La música puede llegar después.
 MVP:
 
 ```text
-PLAY
+JUGAR
+AJUSTES  ← música / efectos: volumen y mute
+        ← una mano (AUTO): on/off
+        ← SKIN: 4 trajes
 ```
+
+En partida:
+
+* botón ⏸ de pausa (**mantener ~0.3 s** — un toque rápido no pausa, para
+  evitar pausas accidentales durante el combate);
+* pausa automática al pasar la app a segundo plano.
 
 Nada más es estrictamente necesario.
 
@@ -931,11 +1069,18 @@ SHIPS STOLEN
 
 Registrar:
 
+* puntaje total;
+* combo máximo;
 * tiempo sobrevivido;
 * enemigos eliminados;
 * naves robadas;
 * naves destruidas;
 * arma más usada.
+
+**Récords locales:** el top 5 de puntuaciones se guarda en el dispositivo
+(`localStorage`) y se muestra en la pantalla de resultados y en el menú
+principal. El récord nuevo se resalta (🏆). Los leaderboards online siguen
+fuera de alcance (§36).
 
 No necesitan persistencia inicialmente.
 
@@ -1157,4 +1302,3 @@ La señal más importante es:
 > **“Quiero robar otra nave.”**
 
 Si el juego genera esa reacción, el core loop funciona.
-

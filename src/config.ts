@@ -19,14 +19,17 @@ export const HUD_TOP = 12;
 
 // Player base values (GDD §13 — arbitrary MVP values, tuned in playtests).
 export const PLAYER = {
-  hp: 100,
+  hp: 150,
   speed: 150,
   radius: 11,
+  shieldMax: 50, // shield pickup grants this much absorb (GDD §16 Drops)
+  medkitHeal: 50, // medkit pickup heals this much HP (GDD §16 Drops)
   invulnAfterHit: 700,
   invulnAfterEject: 2500,
   ejectImpulse: 260,
   interactRangePickup: 32,
   interactRangeShip: 48,
-  stealHoldMs: 650,
+  autoPickupMs: 400, // stand-still time to auto-pick weapons/shields (GDD §11)
+  stealHoldMs: 650, // stand-still time to steal a disabled ship (GDD §11)
   exitHoldMs: 400,
 };

@@ -1,9 +1,9 @@
 // BOSS SYSTEM (GDD §23): Alien Commander — patterns, weak core, summons, enrage.
-import Phaser from 'phaser';
-import { allocId, type Actor } from '../core/types';
-import { BOSS, type BossDef } from '../data/enemies';
-import type { Fx } from '../core/fx';
-import { playSound } from '../core/audio';
+import Phaser from "phaser";
+import { allocId, type Actor } from "../core/types";
+import { BOSS, type BossDef } from "../data/enemies";
+import type { Fx } from "../core/fx";
+import { playSound } from "../core/audio";
 
 export interface BossActor extends Actor {
   def: BossDef;
@@ -17,6 +17,8 @@ export interface BossActor extends Actor {
   aimedNextAt: number;
   summonAt: number;
   enraged: boolean;
+  berserk: boolean; // phase 2 below berserkHpRatio (GDD §23)
+  spiralAt: number;
   coreSprite: Phaser.GameObjects.Sprite;
   coreFlashUntil: number;
 }
@@ -24,7 +26,7 @@ export interface BossActor extends Actor {
 export interface BossWorld {
   scene: Phaser.Scene;
   getPlayer(): { x: number; y: number; alive: boolean };
-  spawnSummon(kind: 'grunt' | 'charger', x: number, y: number): void;
+  spawnSummon(kind: "grunt" | "charger", x: number, y: number): void;
   countSummons(): number;
   onBossStarted: () => void;
   onBossDefeated: () => void;
@@ -48,13 +50,13 @@ export class BossSystem {
     body.setCircle(34);
     body.setCollideWorldBounds(true);
     sprite.setDepth(6);
-    const coreSprite = scene.add.sprite(x, y + 30, 'boss_core').setDepth(7);
+    const coreSprite = scene.add.sprite(x, y + 30, "boss_core").setDepth(7);
     coreSprite.setBlendMode(Phaser.BlendModes.ADD);
     const boss: BossActor = {
       id: allocId(),
       def,
       radius: 34,
-      team: 'enemy',
+      team: "enemy",
       sprite,
       body,
       hp: def.hp,
@@ -71,12 +73,14 @@ export class BossSystem {
       aimedNextAt: 0,
       summonAt: scene.time.now + 6000,
       enraged: false,
+      berserk: false,
+      spiralAt: 0,
       coreSprite,
       coreFlashUntil: 0,
     };
     this.boss = boss;
     this.world.onBossStarted();
-    playSound('bossWarn');
+    playSound("bossWarn");
     return boss;
   }
 
@@ -97,7 +101,15 @@ export class BossSystem {
       b.enraged = true;
       b.sprite.setTint(0xff7a5f);
       this.fx.burst(b.sprite.x, b.sprite.y, 0xff2f4f, 22, 220, 700, 1.2);
-      playSound('bossWarn');
+      playSound("bossWarn");
+    }
+    // Phase 2 below quarter HP: berserk — spiral pattern + red pulse.
+    if (!b.berserk && b.hp <= b.maxHp * b.def.berserkHpRatio) {
+      b.berserk = true;
+      this.fx.burst(b.sprite.x, b.sprite.y, 0xff2f4f, 30, 260, 800, 1.4);
+      this.fx.shake(200, 350);
+      playSound("bossWarn");
+      this.world.scene.cameras.main.flash(250, 160, 40, 40);
     }
 
     // Hover: patrol horizontally, bob vertically (GDD §23: gran nave alienígena).
@@ -116,8 +128,25 @@ export class BossSystem {
     if (now < b.coreFlashUntil) b.coreSprite.setTintFill(0xffffff);
     else b.coreSprite.clearTint();
 
-    const speedMult = b.enraged ? b.def.enrageBulletSpeedMult : 1;
-    const fireMult = b.enraged ? b.def.enrageFireRateMult : 1;
+    // Berserk visual: pulsing red hull.
+    if (b.berserk) {
+      b.sprite.setTint(Math.floor(now / 90) % 2 === 0 ? 0xff2f4f : 0x8f2f4f);
+    }
+
+    const speedMult =
+      (b.enraged ? b.def.enrageBulletSpeedMult : 1) * (b.berserk ? 1.3 : 1);
+    const fireMult =
+      (b.enraged ? b.def.enrageFireRateMult : 1) * (b.berserk ? 1.25 : 1);
+
+    // Phase 2 pattern: rotating spiral (GDD §23).
+    if (b.berserk && now >= b.spiralAt) {
+      b.spiralAt = now + b.def.spiralIntervalMs;
+      for (let i = 0; i < 10; i++) {
+        const a = b.t * 2.2 + (i / 10) * Math.PI * 2;
+        this.fireBossBullet(core.x, core.y, a, 130 * speedMult, 10);
+      }
+      playSound("laser");
+    }
 
     // Pattern 1: radial bursts.
     if (now >= b.radialAt) {
@@ -126,9 +155,15 @@ export class BossSystem {
       const offset = b.t * 0.5;
       for (let i = 0; i < count; i++) {
         const a = (i / count) * Math.PI * 2 + offset;
-        this.fireBossBullet(core.x, core.y, a, b.def.radialBulletSpeed * speedMult, 14);
+        this.fireBossBullet(
+          core.x,
+          core.y,
+          a,
+          b.def.radialBulletSpeed * speedMult,
+          14,
+        );
       }
-      playSound('laser');
+      playSound("laser");
     }
 
     // Pattern 2: aimed barrage volleys.
@@ -142,9 +177,15 @@ export class BossSystem {
       b.aimedNextAt = now + 240;
       const base = Math.atan2(player.y - core.y, player.x - core.x);
       for (const off of [-0.16, 0, 0.16]) {
-        this.fireBossBullet(core.x, core.y, base + off, b.def.aimedSpeed * speedMult, b.def.aimedDamage);
+        this.fireBossBullet(
+          core.x,
+          core.y,
+          base + off,
+          b.def.aimedSpeed * speedMult,
+          b.def.aimedDamage,
+        );
       }
-      playSound('plasma');
+      playSound("plasma");
     }
 
     // Pattern 3: summon reinforcements.
@@ -153,11 +194,16 @@ export class BossSystem {
       if (this.world.countSummons() < b.def.summonCap) {
         const n = Math.random() < 0.5 ? 3 : 2;
         for (let i = 0; i < n; i++) {
-          const kind: 'grunt' | 'charger' = Math.random() < 0.55 ? 'grunt' : 'charger';
-          this.world.spawnSummon(kind, core.x + (i - n / 2) * 34, core.y + 46 + i * 14);
+          const kind: "grunt" | "charger" =
+            Math.random() < 0.55 ? "grunt" : "charger";
+          this.world.spawnSummon(
+            kind,
+            core.x + (i - n / 2) * 34,
+            core.y + 46 + i * 14,
+          );
         }
         this.fx.burst(core.x, core.y + 40, 0x9a4fd0, 10, 120, 400, 0.8);
-        playSound('alienDeath');
+        playSound("alienDeath");
       }
     }
 
@@ -174,8 +220,14 @@ export class BossSystem {
     }
   }
 
-  private fireBossBullet(x: number, y: number, angle: number, speed: number, damage: number): void {
-    this.world.scene.events.emit('bossBullet', x, y, angle, speed, damage);
+  private fireBossBullet(
+    x: number,
+    y: number,
+    angle: number,
+    speed: number,
+    damage: number,
+  ): void {
+    this.world.scene.events.emit("bossBullet", x, y, angle, speed, damage);
   }
 
   private defeat(): void {
@@ -185,14 +237,14 @@ export class BossSystem {
     // Multi-stage explosion — the most violent feedback in the game (GDD §30).
     const scene = this.world.scene;
     this.fx.burst(b.sprite.x, b.sprite.y, 0xff9a4f, 40, 320, 900, 1.6);
-    playSound('shipDestroy');
+    playSound("shipDestroy");
     scene.time.delayedCall(180, () => {
       this.fx.burst(b.sprite.x, b.sprite.y, 0xffd25f, 30, 260, 800, 1.3);
-      playSound('explosion');
+      playSound("explosion");
     });
     scene.time.delayedCall(420, () => {
       this.fx.burst(b.sprite.x, b.sprite.y, 0x48e0ff, 26, 200, 700, 1.1);
-      playSound('explosion');
+      playSound("explosion");
     });
     scene.time.delayedCall(800, () => {
       this.world.onBossDefeated();

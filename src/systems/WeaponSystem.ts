@@ -1,9 +1,9 @@
 // WEAPON SYSTEM (GDD §39): firing cadence for player, ships and enemies.
 // Pure logic over the declarative WeaponDef data — no rendering here.
-import { WEAPONS, type WeaponDef, type WeaponId } from '../data/weapons';
-import { playSound } from '../core/audio';
-import type { CombatSystem } from './CombatSystem';
-import type { Fx } from '../core/fx';
+import { WEAPONS, type WeaponDef, type WeaponId } from "../data/weapons";
+import { playSound } from "../core/audio";
+import type { CombatSystem } from "./CombatSystem";
+import type { Fx } from "../core/fx";
 
 interface ShooterState {
   nextShotAt: number;
@@ -11,11 +11,22 @@ interface ShooterState {
   nextBurstAt: number;
 }
 
+export interface WeaponMods {
+  fireRateMult: number;
+  extraParallel: number;
+  pierce: boolean;
+}
+
 export class WeaponSystem {
   private states = new Map<number, ShooterState>();
   private combat: CombatSystem;
   private fx: Fx;
   private recordShot: ((w: WeaponId) => void) | null = null;
+  private modsProvider: () => WeaponMods = () => ({
+    fireRateMult: 1,
+    extraParallel: 0,
+    pierce: false,
+  });
 
   constructor(combat: CombatSystem, fx: Fx) {
     this.combat = combat;
@@ -24,6 +35,15 @@ export class WeaponSystem {
 
   setShotRecorder(record: (w: WeaponId) => void): void {
     this.recordShot = record;
+  }
+
+  /** Power-up modifiers for player fire (GDD §24-lite). */
+  setModsProvider(provider: () => WeaponMods): void {
+    this.modsProvider = provider;
+  }
+
+  private mods(): WeaponMods {
+    return this.modsProvider();
   }
 
   private state(id: number): ShooterState {
@@ -45,15 +65,35 @@ export class WeaponSystem {
     y: number,
     angle: number,
     weapon: WeaponId,
-    team: 'player' | 'enemy',
+    team: "player" | "enemy",
     now: number,
   ): boolean {
     const def = WEAPONS[weapon];
     const s = this.state(shooterId);
+    const m = this.mods();
+    // Burst weapons (GDD §15.4): fire the whole burst while held, then wait
+    // the cooldown before the next cycle.
+    if (def.burst && def.burst > 1) {
+      if (s.burstRemaining > 0) {
+        if (now < s.nextShotAt) return false;
+        s.nextShotAt = now + (def.burstGapMs ?? 90);
+        this.fireWeapon(x, y, angle, def, team);
+        s.burstRemaining--;
+        if (team === "player" && this.recordShot) this.recordShot(weapon);
+        return true;
+      }
+      if (now < s.nextBurstAt) return false;
+      s.burstRemaining = def.burst - 1;
+      s.nextBurstAt =
+        now + (def.burstCooldownMs ?? 1000 / def.fireRate) / m.fireRateMult;
+      this.fireWeapon(x, y, angle, def, team);
+      if (team === "player" && this.recordShot) this.recordShot(weapon);
+      return true;
+    }
     if (now < s.nextShotAt) return false;
-    s.nextShotAt = now + 1000 / def.fireRate;
+    s.nextShotAt = now + 1000 / (def.fireRate * m.fireRateMult);
     this.fireWeapon(x, y, angle, def, team);
-    if (team === 'player' && this.recordShot) this.recordShot(weapon);
+    if (team === "player" && this.recordShot) this.recordShot(weapon);
     return true;
   }
 
@@ -65,19 +105,21 @@ export class WeaponSystem {
     x: number,
     y: number,
     angle: number,
-    weapon: NonNullable<import('../data/enemies').EnemyDef['weapon']>,
-    team: 'enemy',
+    weapon: NonNullable<import("../data/enemies").EnemyDef["weapon"]>,
+    team: "enemy",
     now: number,
   ): void {
     const s = this.state(enemyId);
     if (now < s.nextBurstAt) return;
     if (s.burstRemaining > 0 && now >= s.nextShotAt) {
       this.combat.spawnProjectile(
-        x, y, angle + (Math.random() - 0.5) * 0.22,
+        x,
+        y,
+        angle + (Math.random() - 0.5) * 0.22,
         {
           damage: weapon.damage,
           projectileSpeed: weapon.projectileSpeed,
-          projectileKey: 'proj_enemy',
+          projectileKey: "proj_enemy",
           projectileRadius: 4,
           life: 1.4,
         },
@@ -85,7 +127,7 @@ export class WeaponSystem {
       );
       s.burstRemaining--;
       s.nextShotAt = now + (weapon.burstGapMs ?? 200);
-      playSound('pistol');
+      playSound("pistol");
       return;
     }
     if (s.burstRemaining === 0) {
@@ -104,16 +146,19 @@ export class WeaponSystem {
     y: number,
     angle: number,
     def: WeaponDef,
-    team: 'player' | 'enemy',
+    team: "player" | "enemy",
   ): void {
     const pellets = def.pellets ?? 1;
+    const m = this.mods();
+    const parallel =
+      (def.parallel ?? 1) + (team === "player" ? m.extraParallel : 0);
     for (let i = 0; i < pellets; i++) {
       const offset = pellets === 1 ? 0 : (i / (pellets - 1) - 0.5) * def.spread;
       const a = angle + offset;
-      const parallel = def.parallel ?? 1;
       for (let p = 0; p < parallel; p++) {
         const gap = def.parallelGap ?? 0;
-        const perp = p === 0 ? 0 : p % 2 === 0 ? (p / 2) * gap : -((p + 1) / 2) * gap;
+        const perp =
+          p === 0 ? 0 : p % 2 === 0 ? (p / 2) * gap : -((p + 1) / 2) * gap;
         const ox = Math.cos(a + Math.PI / 2) * perp;
         const oy = Math.sin(a + Math.PI / 2) * perp;
         this.combat.spawnProjectile(
@@ -127,13 +172,18 @@ export class WeaponSystem {
             projectileRadius: def.projectileRadius,
             life: def.life,
             knockback: def.knockback ?? 0,
+            pierce: def.pierce ?? (team === "player" ? m.pierce : false),
           },
           team,
         );
       }
     }
     // Muzzle flash + sound feedback (GDD §30).
-    this.fx.muzzleFlash(x + Math.cos(angle) * 14, y + Math.sin(angle) * 14, angle);
+    this.fx.muzzleFlash(
+      x + Math.cos(angle) * 14,
+      y + Math.sin(angle) * 14,
+      angle,
+    );
     playSound(def.sound);
   }
 }

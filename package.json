@@ -11,11 +11,15 @@
     "typecheck": "tsc --noEmit",
     "smoke": "node scripts/smoke.mjs",
     "cap:add:android": "npx cap add android",
-    "cap:sync": "npx cap sync"
+    "cap:sync": "npx cap sync",
+    "tunnel": "cloudflared tunnel run shy-bird-dev",
+    "dev:remote": "vite & cloudflared tunnel run shy-bird-dev"
   },
   "dependencies": {
     "@capacitor/android": "^6.2.1",
     "@capacitor/core": "^6.2.1",
+    "@capacitor/haptics": "^6.0.3",
+    "@capacitor/ios": "^6.2.1",
     "phaser": "^3.90.0"
   },
   "devDependencies": {

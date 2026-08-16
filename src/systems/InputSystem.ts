@@ -7,6 +7,7 @@ export class InputState {
   aimX = 0;
   aimY = 0; // aim direction (unit-ish)
   firing = false;
+  speedMult = 1; // power-up speed multiplier, set by the scene each frame
   interactHeld = false; // context button currently pressed
   interactPressed = false; // edge: context button just pressed this frame
 }

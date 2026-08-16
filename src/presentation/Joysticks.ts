@@ -1,17 +1,22 @@
-// Virtual twin-stick input (GDD §11) + contextual center button.
-// Left half: move stick. Right half: aim stick (fires past threshold).
-// Bottom-center button: contextual action (pick up / steal / exit).
+// Virtual input (GDD §11).
+// ONE full-screen move stick: the ship moves wherever you touch — the left/
+// right split is gone. Firing is fully automatic (auto-aim + auto-fire, see
+// GameScene.updateAutoAim). Pickups and ship theft are proximity-based; the
+// bottom-center button only appears to exit a stolen ship.
 // Desktop fallback handled by the scene (WASD + mouse), not here.
-import Phaser from 'phaser';
-import { VIEW_HEIGHT, VIEW_WIDTH } from '../config';
-import type { InputState } from '../systems/InputSystem';
+import Phaser from "phaser";
+import { VIEW_HEIGHT, VIEW_WIDTH } from "../config";
+import type { InputState } from "../systems/InputSystem";
 
 const STICK_RADIUS = 42;
 const STICK_DEADZONE = 0.14;
-const FIRE_THRESHOLD = 0.45;
-export const BUTTON_X = VIEW_WIDTH / 2;
-export const BUTTON_Y = VIEW_HEIGHT - 62;
+const BUTTON_X = VIEW_WIDTH / 2;
+const BUTTON_Y = VIEW_HEIGHT - 62;
 const BUTTON_HIT_RADIUS = 40;
+// HUD deadzone (top-right): the pause button lives there — don't start a
+// move stick under it.
+const UI_DEADZONE_X = VIEW_WIDTH - 44;
+const UI_DEADZONE_Y = 80;
 
 export interface ContextButtonInfo {
   glyph: string;
@@ -24,75 +29,84 @@ export class Joysticks {
   private input: InputState;
   private moveBase: Phaser.GameObjects.Sprite;
   private moveKnob: Phaser.GameObjects.Sprite;
-  private aimBase: Phaser.GameObjects.Sprite;
-  private aimKnob: Phaser.GameObjects.Sprite;
   private btn: Phaser.GameObjects.Sprite;
   private btnGlyph: Phaser.GameObjects.Text;
   private btnLabel: Phaser.GameObjects.Text;
   private btnProgress: Phaser.GameObjects.Graphics;
   private movePointerId: number | null = null;
-  private aimPointerId: number | null = null;
   private interactPointerId: number | null = null;
   private moveOrigin = { x: 0, y: 0 };
-  private aimOrigin = { x: 0, y: 0 };
   private btnInfo: ContextButtonInfo | null = null;
 
   constructor(scene: Phaser.Scene, input: InputState) {
     this.scene = scene;
     this.input = input;
-    this.moveBase = scene.add.sprite(0, 0, 'stick_base').setDepth(90).setVisible(false).setScrollFactor(0);
-    this.moveKnob = scene.add.sprite(0, 0, 'stick_knob').setDepth(91).setVisible(false).setScrollFactor(0);
-    this.aimBase = scene.add.sprite(0, 0, 'stick_base').setDepth(90).setVisible(false).setScrollFactor(0);
-    this.aimKnob = scene.add.sprite(0, 0, 'stick_knob').setDepth(91).setVisible(false).setScrollFactor(0);
-    this.btn = scene.add.sprite(BUTTON_X, BUTTON_Y, 'btn').setDepth(92).setVisible(false).setScrollFactor(0);
+    this.moveBase = scene.add
+      .sprite(0, 0, "stick_base")
+      .setDepth(90)
+      .setVisible(false)
+      .setScrollFactor(0);
+    this.moveKnob = scene.add
+      .sprite(0, 0, "stick_knob")
+      .setDepth(91)
+      .setVisible(false)
+      .setScrollFactor(0);
+    this.btn = scene.add
+      .sprite(BUTTON_X, BUTTON_Y, "btn")
+      .setDepth(92)
+      .setVisible(false)
+      .setScrollFactor(0);
     this.btnGlyph = scene.add
-      .text(BUTTON_X, BUTTON_Y - 2, '', { fontFamily: 'monospace', fontSize: '22px', color: '#1f1f2e' })
+      .text(BUTTON_X, BUTTON_Y - 2, "", {
+        fontFamily: "monospace",
+        fontSize: "22px",
+        color: "#1f1f2e",
+      })
       .setOrigin(0.5)
       .setDepth(93)
       .setScrollFactor(0);
     this.btnLabel = scene.add
-      .text(BUTTON_X, BUTTON_Y - 46, '', {
-        fontFamily: 'monospace',
-        fontSize: '11px',
-        color: '#ffd25f',
-        fontStyle: 'bold',
+      .text(BUTTON_X, BUTTON_Y - 46, "", {
+        fontFamily: "monospace",
+        fontSize: "11px",
+        color: "#ffd25f",
+        fontStyle: "bold",
       })
       .setOrigin(0.5)
       .setDepth(93)
       .setScrollFactor(0)
-      .setStroke('#000000', 3);
+      .setStroke("#000000", 3);
     this.btnProgress = scene.add.graphics().setDepth(94).setScrollFactor(0);
     this.attach();
   }
 
   private attach(): void {
     const inputPlugin = this.scene.input;
-    inputPlugin.on('pointerdown', (p: Phaser.Input.Pointer) => {
+    inputPlugin.on("pointerdown", (p: Phaser.Input.Pointer) => {
       if (!p.wasTouch) return;
-      if (this.btnInfo && Phaser.Math.Distance.Between(p.x, p.y, BUTTON_X, BUTTON_Y) < BUTTON_HIT_RADIUS) {
+      // Context button (exit a stolen ship) wins over the move stick.
+      if (
+        this.btnInfo &&
+        Phaser.Math.Distance.Between(p.x, p.y, BUTTON_X, BUTTON_Y) <
+          BUTTON_HIT_RADIUS
+      ) {
         this.interactPointerId = p.id;
         this.input.interactHeld = true;
         this.input.interactPressed = true;
         return;
       }
-      if (p.x < VIEW_WIDTH / 2) {
-        this.movePointerId = p.id;
-        this.moveOrigin = { x: p.x, y: p.y };
-        this.moveBase.setPosition(p.x, p.y).setVisible(true);
-        this.moveKnob.setPosition(p.x, p.y).setVisible(true);
-      } else {
-        this.aimPointerId = p.id;
-        this.aimOrigin = { x: p.x, y: p.y };
-        this.aimBase.setPosition(p.x, p.y).setVisible(true);
-        this.aimKnob.setPosition(p.x, p.y).setVisible(true);
-      }
+      // HUD deadzone (pause button): no move stick here.
+      if (p.x > UI_DEADZONE_X && p.y < UI_DEADZONE_Y) return;
+      // The move stick is full-screen: it appears wherever you touch.
+      this.movePointerId = p.id;
+      this.moveOrigin = { x: p.x, y: p.y };
+      this.moveBase.setPosition(p.x, p.y).setVisible(true);
+      this.moveKnob.setPosition(p.x, p.y).setVisible(true);
     });
-    inputPlugin.on('pointermove', (p: Phaser.Input.Pointer) => {
+    inputPlugin.on("pointermove", (p: Phaser.Input.Pointer) => {
       if (!p.wasTouch) return;
       if (p.id === this.movePointerId) {
-        this.updateStick(p.x, p.y, this.moveOrigin, this.moveKnob, 'move');
-      } else if (p.id === this.aimPointerId) {
-        this.updateStick(p.x, p.y, this.aimOrigin, this.aimKnob, 'aim');
+        this.updateStick(p.x, p.y, this.moveOrigin, this.moveKnob);
       }
     });
     const release = (p: Phaser.Input.Pointer) => {
@@ -103,20 +117,13 @@ export class Joysticks {
         this.moveKnob.setVisible(false);
         this.input.moveX = 0;
         this.input.moveY = 0;
-      } else if (p.id === this.aimPointerId) {
-        this.aimPointerId = null;
-        this.aimBase.setVisible(false);
-        this.aimKnob.setVisible(false);
-        this.input.aimX = 0;
-        this.input.aimY = 0;
-        this.input.firing = false;
       } else if (p.id === this.interactPointerId) {
         this.interactPointerId = null;
         this.input.interactHeld = false;
       }
     };
-    inputPlugin.on('pointerup', release);
-    inputPlugin.on('pointerupoutside', release);
+    inputPlugin.on("pointerup", release);
+    inputPlugin.on("pointerupoutside", release);
   }
 
   private updateStick(
@@ -124,7 +131,6 @@ export class Joysticks {
     py: number,
     origin: { x: number; y: number },
     knob: Phaser.GameObjects.Sprite,
-    role: 'move' | 'aim',
   ): void {
     let dx = (px - origin.x) / STICK_RADIUS;
     let dy = (py - origin.y) / STICK_RADIUS;
@@ -133,26 +139,16 @@ export class Joysticks {
       dx /= len;
       dy /= len;
     }
-    knob.setPosition(origin.x + dx * STICK_RADIUS, origin.y + dy * STICK_RADIUS);
-    if (role === 'move') {
-      if (len < STICK_DEADZONE) {
-        this.input.moveX = 0;
-        this.input.moveY = 0;
-      } else {
-        this.input.moveX = dx;
-        this.input.moveY = dy;
-      }
+    knob.setPosition(
+      origin.x + dx * STICK_RADIUS,
+      origin.y + dy * STICK_RADIUS,
+    );
+    if (len < STICK_DEADZONE) {
+      this.input.moveX = 0;
+      this.input.moveY = 0;
     } else {
-      // Aim stick: firing starts past the threshold, stops on release (GDD §11).
-      if (len < STICK_DEADZONE) {
-        this.input.aimX = 0;
-        this.input.aimY = 0;
-        this.input.firing = false;
-      } else {
-        this.input.aimX = dx;
-        this.input.aimY = dy;
-        this.input.firing = len >= FIRE_THRESHOLD;
-      }
+      this.input.moveX = dx;
+      this.input.moveY = dy;
     }
   }
 
@@ -182,6 +178,6 @@ export class Joysticks {
 
   /** Touch activity — used by the scene to prefer touch sticks over keyboard. */
   get touchActive(): boolean {
-    return this.movePointerId !== null || this.aimPointerId !== null || this.interactPointerId !== null;
+    return this.movePointerId !== null || this.interactPointerId !== null;
   }
 }
