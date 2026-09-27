@@ -13,7 +13,8 @@
     "cap:add:android": "npx cap add android",
     "cap:sync": "npx cap sync",
     "tunnel": "cloudflared tunnel run shy-bird-dev",
-    "dev:remote": "vite & cloudflared tunnel run shy-bird-dev"
+    "dev:remote": "vite & cloudflared tunnel run shy-bird-dev",
+    "deploy": "npm run build && npx wrangler pages deploy dist --project-name=alien-heist --branch=main"
   },
   "dependencies": {
     "@capacitor/android": "^6.2.1",

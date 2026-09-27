@@ -51,6 +51,28 @@ Nota: la plataforma `android/` no está versionada (generarla con
 desarrollador (extracción de plantillas al añadir la plataforma), no en el
 juego distribuido.
 
+## Hosting (web)
+
+El juego está desplegado gratis en **Cloudflare Pages** (estático, sin backend,
+ancho de banda ilimitado):
+
+| URL | Uso |
+|---|---|
+| https://alienshy.inshalabs.com | URL oficial |
+| https://alienshy-dev.inshalabs.com | Alias del mismo sitio |
+| https://alien-heist.pages.dev | URL de Cloudflare Pages |
+
+```bash
+npm run deploy   # build + deploy a Cloudflare Pages (main = producción)
+```
+
+La app Android carga el juego desde la red (`server.url` en
+`capacitor.config.ts`), así que **los cambios de juego llegan sin reinstalar el
+APK**: desplegar y recargar la app. Para desarrollo en vivo en el teléfono
+(HMR) existe el modo túnel: `npm run dev:remote` (requiere el registro DNS del
+túnel en `inshalabs.com`). Nota: cambiar `capacitor.config.ts` o plugins
+nativos (p. ej. haptics) sí exige recompilar e instalar el APK.
+
 ## Arquitectura (GDD §39)
 
 ```
